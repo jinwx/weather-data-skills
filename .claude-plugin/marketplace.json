@@ -1,0 +1,14 @@
+{
+  "name": "weather-skills",
+  "owner": {
+    "name": "Weixin Jin"
+  },
+  "plugins": [
+    {
+      "name": "weather-data-skills",
+      "source": "./",
+      "description": "Agent Skills for downloading climate and weather data from various sources",
+      "version": "0.0.1"
+    }
+  ]
+}

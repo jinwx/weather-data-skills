@@ -1,0 +1,15 @@
+{
+  "name": "weather-data-skills",
+  "version": "0.0.1",
+  "description": "Agent Skills for downloading climate and weather data from various sources",
+  "author": {
+    "name": "Weixin Jin"
+  },
+  "repository": "https://github.com/jinwx/weather-data-skills",
+  "license": "MIT",
+  "keywords": [
+    "weather",
+    "climate",
+    "data"
+  ]
+}

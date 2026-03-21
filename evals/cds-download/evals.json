@@ -1,0 +1,35 @@
+{
+  "skill_name": "cds-download",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "I want to download ERA5 2-meter temperature for Europe from 2010 to 2020. How do I do this?",
+      "expected_output": "A complete, runnable Python script that downloads ERA5 2m temperature for Europe (2010-2020), split by month, using the new CDS API syntax. Should include setup guidance if needed.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "prompt": "I'm getting 403 Forbidden errors when trying to download data from the CDS API. My .cdsapirc file has uid and key fields, and I installed cdsapi about two years ago. What's wrong?",
+      "expected_output": "Should identify that the .cdsapirc format has changed (now uses url + Personal Access Token, not uid + key), that the API URL has changed, and that cdsapi needs to be version 0.7.7 or newer. Should provide the correct .cdsapirc format and upgrade instructions.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "My CDS downloads are extremely slow, each request takes over a day. I'm downloading ERA5 complete data for 2015-2023. What am I doing wrong?",
+      "expected_output": "Diagnosis that reanalysis-era5-complete is tape-stored (MARS external), explanation of the tape rule, recommendation to use standard ERA5 datasets if model levels aren't needed, and if they are needed, advice on splitting by month and the tape grouping rules.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "I want to download a consistent long-term seasonal forecast dataset of 2m temperature from 1993 to present, covering ECMWF and UK Met Office. I need ensemble mean data. Can you help me figure out which system versions to use and write the download script?",
+      "expected_output": "Should explain that ensemble_mean product type is only available for real-time years (not hindcasts), and that monthly_mean (individual members) must be used for the full date range. Should either use the CDS constraints API to check availability or correctly document the system version coverage. Should handle the fact that UKMO has many system versions with different temporal coverage. The script should be robust to version changes.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "I want to verify how well seasonal forecasts predict precipitation over East Africa. I need daily forecast data from multiple models and a reliable observational reference to validate against, covering at least the last 10 years. What datasets should I download from CDS and how?",
+      "expected_output": "Should recommend two types of datasets: (1) seasonal forecast daily data (seasonal-original-single-levels) with total_precipitation from multiple originating centres, and (2) ERA5 or ERA5-Land reanalysis as the ground truth / verification reference. Should explain that ERA5-Land has higher spatial resolution (0.1 deg vs 0.25 deg) which may be preferable for regional validation. Should provide download scripts for both datasets with appropriate geographic subsetting for East Africa.",
+      "files": []
+    }
+  ]
+}
