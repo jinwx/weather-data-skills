@@ -8,7 +8,8 @@
 |---|---|---|---|
 | `reanalysis-era5-single-levels` | Hourly | CDS disk (fast) | 1940–present |
 | `reanalysis-era5-pressure-levels` | Hourly | CDS disk (fast) | 1940–present |
-| `derived-era5-single-levels-daily-statistics` | Daily (computed on-the-fly) | CDS disk (fast) | 1940–present |
+| `derived-era5-single-levels-daily-statistics` | Daily (on-the-fly) | CDS disk (fast) | 1940–present |
+| `derived-era5-pressure-levels-daily-statistics` | Daily (on-the-fly) | CDS disk (fast) | 1940–present |
 | `reanalysis-era5-single-levels-monthly-means` | Monthly | CDS disk (fast) | 1940–present |
 | `reanalysis-era5-pressure-levels-monthly-means` | Monthly | CDS disk (fast) | 1940–present |
 | `reanalysis-era5-complete` | Hourly | Tape (slow) | 1940–present |
@@ -18,44 +19,29 @@
 | CDS Identifier | Time Scale | Storage | Temporal Coverage |
 |---|---|---|---|
 | `reanalysis-era5-land` | Hourly | CDS disk (fast) | 1950–present |
-| `derived-era5-land-daily-statistics` | Daily (computed on-the-fly) | CDS disk (fast) | 1950–present |
+| `derived-era5-land-daily-statistics` | Daily (on-the-fly) | CDS disk (fast) | 1950–present |
 | `reanalysis-era5-land-monthly-means` | Monthly | CDS disk (fast) | 1950–present |
 
-**Key difference**: ERA5-Land has finer resolution (0.1° ≈ 9 km vs 0.25° ≈ 28 km) but only covers land surface variables — no atmospheric profiles, no ocean.
+**Note:** CDS also offers point-based time-series datasets (`reanalysis-era5-single-levels-timeseries`, `reanalysis-era5-land-timeseries`) optimized for extracting long time series at a single location (NetCDF/CSV). These use an ARCO backend and are not covered by the download script.
 
 ### Choosing a Dataset
 
-- **Surface weather** (temperature, wind, precipitation, radiation): `reanalysis-era5-single-levels`
-- **Atmospheric profiles** (upper-air temperature, wind, humidity, geopotential): `reanalysis-era5-pressure-levels`
-- **Land hydrology** (soil moisture, snow, runoff, lake temperature): `reanalysis-era5-land`
-- **Daily aggregates** (daily mean/min/max/sum without downloading hourly): `derived-era5-*-daily-statistics`
-- **Model-level data** (full vertical resolution, rare): `reanalysis-era5-complete`
-- **Climatological means** (long-term averages): `*-monthly-means` variants
+Narrow down by these dimensions in order:
 
-## Time Scale Differences
+1. **Variable domain** — What are you measuring?
+   - *Surface weather* (2m temperature, 10m wind, precipitation, pressure, radiation, SST, cloud cover, dewpoint): ERA5 single-levels datasets
+   - *Upper-air profiles* (temperature, wind, geopotential, humidity, vertical velocity on pressure levels): ERA5 pressure-levels datasets
+   - *Land surface hydrology* (soil temperature/moisture, snow, runoff, evaporation, lake temperature): ERA5-Land datasets
+   - *Full model-level or wave data*: ERA5-complete (tape-stored, slow; use only when the above don't cover your variable)
 
-### Hourly datasets
-Standard ERA5 — request specific hours via the `time` parameter. This is the native resolution.
+2. **Spatial resolution** — How fine do you need?
+   - 0.25° (≈ 28 km): ERA5 — covers atmosphere, ocean, and land
+   - 0.1° (≈ 9 km): ERA5-Land — land surface variables only (overlaps with ERA5 for some surface variables like 2m temperature, precipitation), no atmospheric profiles, no ocean
 
-### Daily statistics datasets
-These compute daily aggregates **on-the-fly** from hourly data. They have a different API format with extra required parameters:
-
-| Parameter | Values | Notes |
-|---|---|---|
-| `daily_statistic` | `daily_mean`, `daily_minimum`, `daily_maximum`, `daily_sum` | Required. `daily_sum` only for accumulated variables (precipitation, radiation, etc.) and only for single-levels (not ERA5-Land). |
-| `frequency` | `1_hourly`, `3_hourly`, `6_hourly` | Sub-daily sampling used to compute the statistic. |
-| `time_zone` | `utc-12:00` through `utc+14:00` | Defines what constitutes a "day". Default: `utc+00:00`. |
-
-Key differences from hourly datasets:
-- **No `time` parameter** (output is one value per day)
-- **No `data_format` or `download_format` choice** — always outputs NetCDF in a zip archive
-- **No pressure-level variant** — only single-levels and ERA5-Land
-- **Slower than hourly** because aggregation is computed at retrieval time (not pre-stored)
-
-For large-scale daily data, it may be more efficient to download hourly data and aggregate locally.
-
-### Monthly means datasets
-Pre-computed monthly averages. No `day` or `time` parameters needed — just `year` and `month`.
+3. **Time scale** — What temporal resolution do you need?
+   - *Hourly*: native resolution; most flexible
+   - *Daily aggregates* (mean/min/max/sum): daily-statistics datasets — avoids downloading hourly and aggregating locally, but slower (computed on-the-fly). For large domains or long time ranges, downloading hourly and aggregating locally may be faster.
+   - *Monthly averages*: monthly-means datasets — pre-computed, fast, good for climatologies
 
 ## Commonly Used Variables
 
@@ -91,87 +77,44 @@ Common pressure levels (hPa): 1000, 925, 850, 700, 500, 300, 250, 200, 100, 50, 
 - `surface_runoff`, `sub_surface_runoff`
 - `lake_mix_layer_temperature`
 
-**Always verify variable names** using the "Show API request code" button on the dataset's CDS download form. Variable names can be unintuitive and the form is the authoritative source.
-
-## Download Efficiency
-
-### Storage and Speed
-
-**CDS disk** — standard ERA5 datasets (hourly, daily stats, monthly means):
-- Fast access (minutes to tens of minutes)
-- Still benefits from monthly splitting to avoid queue penalties
-
-**Tape archive** — `reanalysis-era5-complete`:
-- Expect **hours to days** for requests
-- Inefficient requests may be cancelled by administrators
-
-### The Tape Rule
-
-For tape-stored data: **always split requests by month**. One month of analysis data = one tape. A request spanning Jan–Dec forces 12 tape mounts; 12 monthly requests each touch one tape.
-
-### Request Splitting Strategy
-
-**Split by month for all ERA5 datasets.** Within each monthly request, include **all** variables, days, and times you need — don't split by variable or day (that creates unnecessary queue overhead).
-
-### Do's and Don'ts
-
-**Do:**
-- Split by month
-- Request all variables in one monthly request
-- Use `area` to subset geographically — `[North, West, South, East]`
-- Use `grid` for coarser resolution when full resolution isn't needed
-- Use disk-hosted datasets when possible (avoid `era5-complete` unless you need model levels)
-
-**Don't:**
-- Request an entire year in one API call (gets deprioritized)
-- Split by individual variable (wasteful)
-- Mix atmospheric + wave + ensemble data in one NetCDF request (different grids cause errors)
-
-### Download Format
-
-The hourly and monthly-means datasets support two parameters for output:
-- **`data_format`**: `"netcdf"` or `"grib"` — the file format itself
-- **`download_format`**: `"unarchived"` (default) or `"zip"` — how the result is packaged
-
-`"unarchived"` returns a bare file when the result is a single file, or a zip when multiple files are produced (common with NetCDF conversion). `"zip"` always wraps in a zip. **Use the default `"unarchived"` for programmatic workflows** — no need to specify it explicitly.
-
-Daily statistics datasets have no format choice — they always output NetCDF in a zip.
+For variables not listed here, query the process description API. Variable names can be unintuitive.
 
 ## Download Script
 
-Use `scripts/download_era5.py` for all ERA5/ERA5-Land downloads. It handles hourly, daily statistics, and monthly means, with optional parallelism. Run `python scripts/download_era5.py --help` for all options. Examples:
+`scripts/download_era5.py` covers common bulk-download scenarios: hourly data (all hours/days per month) and monthly means for the 6 datasets listed above. It splits requests by month, handles `product_type` automatically, and supports parallel downloads. Run `python scripts/download_era5.py --help` for all options.
 
-```bash
-# ERA5 hourly 2m temperature, Europe, 2020-2024
-python scripts/download_era5.py \
-    --dataset reanalysis-era5-single-levels \
-    --variables 2m_temperature total_precipitation \
-    --years 2020 2024 --area 60 -10 30 40 --format netcdf
+For daily statistics, ERA5-complete, time-series datasets, ensemble/by-hour-of-day product types, or selecting specific hours/days, write custom download code using the CDS API directly.
 
-# ERA5 pressure levels
-python scripts/download_era5.py \
-    --dataset reanalysis-era5-pressure-levels \
-    --variables temperature geopotential \
-    --pressure-levels 500 700 850 925 1000 \
-    --years 2020 2024
+## CDS API Reference
 
-# ERA5-Land monthly means
-python scripts/download_era5.py \
-    --dataset reanalysis-era5-land-monthly-means \
-    --variables 2m_temperature --years 2000 2024
+**Always explicitly specify all parameters supported by the dataset.** Omitting or misusing parameters can silently return incorrect data. If any ambiguity remains, ask the user before proceeding.
 
-# Derived daily statistics
-python scripts/download_era5.py \
-    --dataset derived-era5-single-levels-daily-statistics \
-    --variables 2m_temperature --daily-statistic daily_mean \
-    --years 2020 2024
+- Some datasets have a `product_type` parameter — do not omit it, as incorrect or missing values can silently return wrong data.
 
-# Parallel (4 workers)
-python scripts/download_era5.py \
-    --dataset reanalysis-era5-single-levels \
-    --variables 2m_temperature --years 2020 2024 --workers 4
-```
+- Time dimensions required per dataset type:
 
+  | Parameter | Hourly | Daily statistics | Monthly means |
+  |---|---|---|---|
+  | `year` | required | required | required |
+  | `month` | required | required | required |
+  | `day` | required | required | — |
+  | `time` | required | — | required |
+
+- Use `grib` for `data_format`. Daily statistics datasets have no format choice — they always output NetCDF in a zip archive.
+
+- **Split requests by month** for all ERA5 datasets. One month = one tape for `reanalysis-era5-complete`; multi-month requests force multiple tape mounts and get deprioritized. Within each monthly request, include all variables, days, and times — don't split by variable or day.
+
+- `reanalysis-era5-complete` is tape-archived (hours to days per request). All other datasets are on CDS disk (minutes). Avoid `era5-complete` unless you need model levels.
+
+- Use `area` ([North, West, South, East]) to subset geographically. Do not mix atmospheric + wave + ensemble data in one NetCDF request (different grids cause errors).
+
+- To query the full parameter schema for any dataset (no authentication required):
+
+  ```
+  GET https://cds.climate.copernicus.eu/api/retrieve/v1/processes/{dataset}
+  ```
+
+  This returns all supported parameters, valid values, and constraints. Use it to verify variable names and discover parameters not listed above.
 
 ## Documentation Links
 
