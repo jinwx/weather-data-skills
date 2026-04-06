@@ -4,5 +4,6 @@ __pycache__/
 *.pyo
 .env
 *.egg-info/
+.vscode/
 dist/
 build/

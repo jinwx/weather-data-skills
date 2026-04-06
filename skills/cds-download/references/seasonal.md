@@ -1,189 +1,195 @@
 # Seasonal Forecast Datasets
 
-## Dataset Catalog
+## Step 1: Choose the Dataset
 
-| CDS Identifier | Description | Temporal Res | Storage |
-|---|---|---|---|
-| `seasonal-monthly-single-levels` | Monthly statistics (means, etc.) on single levels | Monthly | MARS external (tape) |
-| `seasonal-monthly-pressure-levels` | Monthly statistics on pressure levels | Monthly | MARS external (tape) |
-| `seasonal-original-single-levels` | Daily/sub-monthly data on single levels | Daily | MARS external (tape) |
-| `seasonal-original-pressure-levels` | Daily/sub-monthly data on pressure levels | Daily | MARS external (tape) |
+- Monthly statistics of absolute values (most common starting point)
+  - `seasonal-monthly-single-levels`
+  - `seasonal-monthly-pressure-levels`
 
-### When to Use Which
+- Daily/subdaily resolution. Use only when you need daily or sub-daily variability.
+  - `seasonal-original-single-levels`
+  - `seasonal-original-pressure-levels`
 
-- **Monthly means / anomalies**: Use `seasonal-monthly-*` — these are pre-aggregated and much smaller to download
-- **Daily extremes or sub-monthly variability**: Use `seasonal-original-*` — full temporal resolution but much larger
+- Monthly anomalies (departures from each system's climatology over `1993-2016`).
+  - `seasonal-postprocessed-single-levels`
+  - `seasonal-postprocessed-pressure-levels`
 
-## System Versioning — Critical Background
+- Ocean sub-surface and circulation variables (e.g. depth-resolved temperature/salinity, mixed layer depth, ocean currents).
+  - `seasonal-monthly-ocean`
 
-Seasonal forecast data is produced by multiple centres, each running their own model. Centres periodically upgrade their forecast systems, creating new "system" versions. This has major implications for downloading data:
+## Step 2: Inspect Schema and Confirm Selectors
 
-### Hindcasts vs Real-Time Forecasts
+For a candidate dataset, the Agent may query its parameter schema:
 
-Each system version produces two types of data:
-
-- **Hindcasts (re-forecasts)**: Retrospective runs over a historical period (typically 1993–2016, some centres go back to 1981). Used for bias correction and skill assessment. Produced once when the system is set up.
-- **Real-time forecasts**: Operational forecasts from the date the system went live until it was replaced by a newer version.
-
-**Critical rule**: Hindcasts and real-time forecasts **must** come from the same system version for bias correction. Never mix system 5 hindcasts with system 51 real-time data — they may have different grids or model physics.
-
-### Product Type Coverage Differs
-
-Not all product types cover the same years within a system:
-
-- **`ensemble_mean`** and **`hindcast_climate_mean`**: Typically only available for real-time forecast years (e.g., 2017 onward for ECMWF system 51). These are pre-computed summaries.
-- **`monthly_mean`** (individual member statistics): Available for the full date range including hindcast years (e.g., 1981–present for ECMWF).
-
-**If you need long-term data, you must use `monthly_mean` (individual members), not `ensemble_mean`**, even if you only want the ensemble mean. You can compute the mean yourself from the individual members.
-
-### Using the Constraints API to Check Availability
-
-**Always use the CDS constraints API before writing a download script** to verify which system/year/month/product_type combinations actually have data. The `scripts/cds_utils.py` module provides `query_constraints()` and `find_latest_system()` for this purpose.
-
-The constraints API endpoint:
 ```
-POST https://cds.climate.copernicus.eu/api/retrieve/v1/processes/{dataset-id}/constraints
-Content-Type: application/json
-
-{"inputs": {"originating_centre": ["ecmwf"], "system": ["51"], "product_type": ["monthly_mean"]}}
+GET https://cds.climate.copernicus.eu/api/retrieve/v1/processes/{dataset-id}
 ```
 
-Pass a partial selection; the response contains valid values for all remaining parameters. No authentication required.
+The response `inputs` object lists every parameter with its full enum of valid values. No authentication is required. Use this object to identify the selectors that matter for the dataset. This step is only for understanding the request shape. Actual availability is resolved in Step 3 via the constraints API. For familiar monthly atmospheric workflows, if the required selectors are already clear from this guide, the Agent may skip this query.
 
-**Usage pattern**: Before downloading, run 1–2 constraint queries:
-1. What systems exist for the centre: `{"inputs": {"originating_centre": ["<centre>"]}}`
-2. What years/months are available: `{"inputs": {"originating_centre": ["<centre>"], "system": ["<sys>"], "product_type": ["<type>"]}}`
+### Key parameters of monthly datasets
 
-You can also query via `curl`:
-```bash
-curl -s -X POST \
-  "https://cds.climate.copernicus.eu/api/retrieve/v1/processes/seasonal-monthly-single-levels/constraints" \
-  -H "Content-Type: application/json" \
-  -d '{"inputs": {"originating_centre": ["ecmwf"], "system": ["51"]}}' \
-  | python3 -m json.tool
-```
+> **Hindcasts vs forecasts.** Hindcasts (re-forecasts) are retrospective runs over a historical period. Forecasts are operational runs produced after a system goes live. For monthly datasets, hindcasts generally end in 2016 and forecasts begin from 2017 onwards.
 
-**Important**: The constraints API returns flat lists of valid values per parameter. When querying without a year filter, the returned `month` list is the union across all years — not every (year, month) pair may be valid. To get exact months for a specific year, include `"year": ["2025"]` in the query. This is especially relevant for centres like UKMO where systems are activated mid-year.
+**`product_type`** (on `seasonal-monthly-*` and `seasonal-postprocessed-*`):
 
-The static constraints endpoint (`GET .../constraints.json`) returns every valid parameter combination as a JSON array — useful for a complete availability map, but the response is large.
+`monthly_mean` is the primary product type. It provides per-member monthly means and is the only product type that spans both hindcasts and forecasts — **use it whenever you need hindcast data**. Compute ensemble statistics or anomalies yourself.
 
-### System Version Reference
+Other product types:
+- `monthly_maximum` / `monthly_minimum` / `monthly_standard_deviation` — extra per-member statistics, `seasonal-monthly-single-levels` only. Same coverage as `monthly_mean`.
+- `ensemble_mean` — mean across all members of `monthly_mean`. Forecast years only.
+- `hindcast_climate_mean` — climatology (ensemble mean over 1993–2016 hindcasts) for each `system` + nominal start `month` + `leadtime_month`. Only on `seasonal-monthly-*`. Must request a forecast year (≥2017), but the result is year-invariant — any single valid year returns the same climatology.
 
-Centres and their systems (as of early 2026):
+Additional notes:
 
-| Centre | Current System | Previous Systems | Hindcast Start | Notes |
-|---|---|---|---|---|
-| ECMWF | `51` (Nov 2022–) | `5` (Nov 2017–Oct 2022), `4` (Sep–Oct 2017) | 1981 | Cleanest pattern. sys 51 changed grid interpolation vs sys 5. |
-| Meteo-France | `9` (May 2025–) | `8`, `7`, `6`, `5` | 1993 | Hindcast end varies by system (sys 9: to 2024). |
-| UKMO | `605` (Mar 2026–) | `604`, `603`, `602`, `601`, `600`, `15`, `14`, `13`, `12` | 1993 | On-the-fly hindcasts — each system number has its own hindcast set. Very complex. Jan 1993 missing for all UKMO systems. |
-| DWD | `22` (Apr 2025–) | `21`, `2` | 1993 | |
-| CMCC | `4` (Aug 2025–) | `35`, `3` | 1993 | |
-| NCEP | `2` (Oct 2019–) | — | 1993 | Single system, stable. |
-| JMA | — | `3` (Feb 2022–Feb 2026), `2` | 1993 (sys 3), 1981 (sys 2) | Discontinued from C3S multi-system Feb 2026. |
-| ECCC | `4` & `5` (Jul 2024–) | `3`, `2`, `1` | 1993 | Two sub-models run in parallel (CanESM5.1p1bc + GEM5.2-NEMO). |
-| BOM | `2` (May 2025–) | — | 1993 | Recently joined C3S. |
+- `seasonal-postprocessed-*` = `seasonal-monthly-*` minus `hindcast_climate_mean`, for both `monthly_mean` and `ensemble_mean`.
+- `seasonal-monthly-ocean` has no `product_type`; it uses `forecast_type` (`hindcast` or `forecast`) instead.
+- `seasonal-original-*` has neither `product_type` nor `forecast_type`.
 
-**These version numbers change over time.** Always verify against the constraints API rather than relying on this table for the latest values.
+### Confirm selections before proceeding
 
-For the full real-time system timeline (which system was active each month for each centre), see: https://confluence.ecmwf.int/display/CKB/Summary+of+available+data
+Before moving to Step 3, confirm the following with the user (or infer from their requirements):
+- Which `originating_centre`(s) to include.
+- Which `product_type` or `forecast_type` to use.
+- The desired time range (years/months).
 
-## Download Strategies
+These choices determine what system versions need to be resolved in Step 3.
 
-Downloading a consistent long-term seasonal forecast dataset (e.g., 1993–2025) is complicated because system versions change. The `scripts/query_seasonal_plan.py` script automates the planning step for Strategy A and B below.
+## Step 3: Version Selection and Plan
 
-### Strategy A: Single-System (Simplest, Recommended)
+Seasonal forecast data is versioned by `system`. A long record for one centre may span multiple systems with overlapping coverage, mid-year transitions, or parallel current systems.
 
-Pick one system version and download all data it covers. The latest system typically has hindcasts covering 1993–2016 (or longer) plus real-time forecasts from activation to present. This gives an **internally consistent** dataset — same model physics throughout.
+This step uses two scripts that work with `seasonal-monthly-*` and `seasonal-postprocessed-*` datasets. For `seasonal-original-*` and `seasonal-monthly-ocean`, the Agent can follow this process as a reference but should query and plan manually.
+
+### 3a. Query system coverage
+
+First confirm the user's version-selection preference. Common choices include:
+- **Use a fixed system** — specify a single system for the entire time range.
+- **Let the Agent decide** — the Agent proposes a mapping based on heuristics (prefer newest system, prefer fewer systems, fall back to older systems only when coverage is missing).
+- **Provide their own mapping** — the user specifies which system to use for which period.
+
+Then run `scripts/query_seasonal_systems.py` for each centre:
 
 ```bash
-python scripts/query_seasonal_plan.py --centre ecmwf -o plan.json
+python scripts/query_seasonal_systems.py \
+    --dataset seasonal-monthly-single-levels \
+    --centre ecmwf \
+    --product-type monthly_mean \
+    [--workers 8] \
+    [--output-dir seasonal-query-output]
 ```
 
-### Strategy B: Maximum Coverage (Best for ML/Data-Driven Work)
+Output:
 
-When temporal coverage matters more than strict single-system consistency:
-
-1. Use the **latest system's hindcasts** for the historical period (typically 1993–2016)
-2. **Chain real-time data** from successive systems for 2017 onward, preferring the newer system for overlapping months
-
-For centres like ECMWF where the latest system already covers 1981–present, this collapses to Strategy A. Chaining is primarily needed for centres like UKMO where each system covers only 1–2 real-time years.
-
-```bash
-python scripts/query_seasonal_plan.py --centre ukmo --strategy max-coverage -o plan.json
+```json
+{
+  "centre": "ecmwf",
+  "dataset": "seasonal-monthly-single-levels",
+  "product_type": "monthly_mean",
+  "systems": [
+    {
+      "system": "4",
+      "hindcast": {"first": "1993-09", "last": "2015-10", "span_coverage": 0.173},
+      "forecast": {"first": "2017-09", "last": "2017-10", "span_coverage": 1.0}
+    },
+    ...
+  ]
+}
 ```
 
-### Strategy C: Chained Systems (Strict Real-Time Only)
+Fields:
+- `hindcast` / `forecast`: summary for months before 2017 / from 2017 onward. Either field may be `null` if the system has no data in that period.
+- `first` / `last`: first and last `(year, month)` with data in that period.
+- `span_coverage`: fraction of months with data in the `first`–`last` span (1.0 = no gaps). A quick density hint; inspect `segments` in the detail JSON for exact coverage.
 
-Cover only the real-time period (2017–present) with each system's operational data, plus hindcasts from one system for bias correction. Data from different systems is **not directly comparable** without recalibration. Build this plan manually or adapt the max-coverage script.
+The script also writes a per-centre detail JSON file (default: `seasonal-query-output/{centre}.json` in the working directory). In that file, each system also includes `segments`: exact contiguous `(year, month)` ranges for the full record.
 
-### Strategy D: Multi-Centre Ensemble
+Use the stdout summary first. If coverage is simple, it may already be enough. If systems overlap, have gaps, or show low `span_coverage`, read the detail JSON and use `segments` to decide where systems switch.
 
-Download from multiple centres for the same period. The common hindcast period across all centres is typically **1993–2016**.
+### 3b. Compile the plan
 
-```bash
-python scripts/query_seasonal_plan.py \
-    --centres ecmwf meteo_france dwd cmcc ukmo -o plan.json
+Once the version-selection decision is made, write a plan JSON that maps each centre's time range to specific systems. Within each centre, segments must be ordered by `start` and must not overlap. Prefer the newest system with coverage; fall back to older systems only for periods the newer one does not cover.
+
+```json
+{
+  "dataset": "seasonal-monthly-single-levels",
+  "product_type": "monthly_mean",
+  "centres": [
+    {
+      "centre": "ecmwf",
+      "segments": [
+        {"system": "51", "start": "1981-01", "end": "2026-03"}
+      ]
+    },
+    {
+      "centre": "ukmo",
+      "segments": [
+        {"system": "603", "start": "1993-01", "end": "2025-02"},
+        {"system": "604", "start": "2025-03", "end": "2026-02"}
+      ]
+    }
+  ]
+}
 ```
 
-## Key Parameters
-
-Seasonal forecast requests have unique parameters compared to ERA5:
-
-- **`originating_centre`**: `ecmwf`, `meteo_france`, `dwd`, `cmcc`, `ukmo`, `ncep`, `jma`, `eccc`, `bom`
-- **`system`**: Model version number. **Always verify with the constraints API** — these change when centres upgrade.
-- **`leadtime_month`**: Forecast lead time in months. Values 1–6 are typical; some centres provide longer.
-- **`product_type`**:
-  - `monthly_mean` — per-member monthly mean (available for both hindcast and real-time years)
-  - `monthly_maximum` / `monthly_minimum` / `monthly_standard_deviation` — per-member statistics
-  - `ensemble_mean` — pre-computed ensemble mean (often only for real-time years)
-  - `hindcast_climate_mean` — climatological mean from the hindcast period
-
-## Efficiency Tips
-
-Seasonal forecast data is stored on tape, so efficient request construction matters — but the strategy is **very different from ERA5**.
-
-### Combine as much as possible into each request
-
-Unlike ERA5 (split by month), seasonal forecast efficiency means **maximizing what you request from the same tape**. In each request, combine:
-- All **variables** you need
-- All **pressure levels** (for pressure-level datasets)
-- All **product types**
-- All **leadtime months**
-
-### Split on initialization date
-
-Each initialization month (year + month) sits on a different tape. Use **separate requests per initialization date**. The download scripts handle this automatically.
-
-### Other tips
-
-- **Expect slow retrieval**: Tape-based data can take hours.
-- **Use monthly statistics when possible**: `seasonal-monthly-*` is much smaller than `seasonal-original-*`.
-- **GRIB is strongly recommended**: Native format. NetCDF conversion is experimental — can be slow and lossy.
-- **Test request size via the web form first**: The CDS download form warns when requests are too large.
-
-Reference: https://confluence.ecmwf.int/display/CKB/Recommendations+and+efficiency+tips+for+C3S+seasonal+forecast+datasets
-
-## Download
-
-After building a plan with `scripts/query_seasonal_plan.py` (see strategy examples above), download with:
+Then validate the plan against the saved 3a coverage data:
 
 ```bash
-python scripts/download_seasonal.py --plan plan.json \
-    --variables 2m_temperature total_precipitation \
+python scripts/check_seasonal_plan.py \
+    --plan plan.json \
+    --coverage-dir seasonal-query-output
+```
+
+The checker validates:
+- per-centre segment order and non-overlap
+- that every segment is fully covered by the saved 3a `segments`
+
+If `ok` in the output JSON is true, report the plan to the user together with the remaining download parameters identified in Step 2 (variables, leadtime, format, area, etc.). Proceed to Step 4 once the user agrees.
+
+## Step 4: Download
+
+This step uses `download_seasonal.py`, which works with `seasonal-monthly-*` and `seasonal-postprocessed-*` datasets. For `seasonal-original-*` and `seasonal-monthly-ocean`, use this process only as a reference and query and plan manually.
+
+```bash
+python scripts/download_seasonal.py \
+    --plan plan.json \
+    --variables VAR [VAR ...] \
     --leadtime-months 1 2 3 4 5 6 \
+    [--pressure-levels 500 850 ...] \
     --format grib \
-    -o ./seasonal_data
+    [--area N W S E] \
+    [-o ./seasonal_data] \
+    [--workers 4]
 ```
 
-Options: `--area N W S E` for geographic subset, `--workers 2` for parallelism (max recommended: 4).
+Each file is downloaded to `*.downloading` first, then renamed after completion. This avoids leaving an incomplete final file when CDS creates an empty target before data transfer finishes.
+
+### Efficiency tips
+
+CDS stores seasonal data in "leaves" — data cubes defined by a set of fixed selectors. Parameters within a leaf can be requested together efficiently; parameters that split leaves cannot.
+
+| Dataset family | Leaf-splitting selectors | Within one leaf |
+|---|---|---|
+| `seasonal-monthly-*`, `seasonal-postprocessed-*` | `originating_centre`, `product_type`, `system`, `year` | `month`, `leadtime_month`, `variable` (+ `pressure_level`) |
+| `seasonal-original-*` | `originating_centre`, `system`, `year`, `month`, `day` | `leadtime_hour`, `variable` (+ `pressure_level`) |
+| `seasonal-monthly-ocean` | `forecast_type`, `originating_centre`, `system`, `year` | `month`, `variable` |
+
+Keep all leaf-splitting selectors fixed within one request. Combine as many within-leaf parameters as practical. How to split requests across leaves (e.g. one request per year vs. per month) is up to the Agent — consider the plan's system boundaries and request size.
+
+References:
+- ECMWF efficiency note: https://confluence.ecmwf.int/display/CKB/Recommendations+and+efficiency+tips+for+C3S+seasonal+forecast+datasets
+- ECMWF seasonal catalogue leaf browser: https://apps.ecmwf.int/data-catalogues/c3s-seasonal/?class=c3
 
 ## Documentation Links
 
-- Seasonal forecasts overview: https://confluence.ecmwf.int/display/CKB/Seasonal+forecasts
-- Summary of available data (system timeline): https://confluence.ecmwf.int/display/CKB/Summary+of+available+data
-- Start dates per forecast system: https://confluence.ecmwf.int/display/CKB/Start+dates+available+in+the+CDS+per+forecast+system
-- C3S seasonal forecast documentation: https://climate.copernicus.eu/seasonal-forecasts
+- C3S Seasonal Forecasts: https://confluence.ecmwf.int/display/CKB/C3S+Seasonal+Forecasts
+- Summary of available data: https://confluence.ecmwf.int/display/CKB/Summary+of+available+data
+- Start dates available in the CDS per forecast system: https://confluence.ecmwf.int/display/CKB/Start+dates+available+in+the+CDS+per+forecast+system
 - CDS dataset pages:
   - https://cds.climate.copernicus.eu/datasets/seasonal-monthly-single-levels
+  - https://cds.climate.copernicus.eu/datasets/seasonal-monthly-pressure-levels
   - https://cds.climate.copernicus.eu/datasets/seasonal-original-single-levels
-- Efficiency tips: https://confluence.ecmwf.int/display/CKB/Recommendations+and+efficiency+tips+for+C3S+seasonal+forecast+datasets
+  - https://cds.climate.copernicus.eu/datasets/seasonal-original-pressure-levels
+  - https://cds.climate.copernicus.eu/datasets/seasonal-postprocessed-single-levels
+  - https://cds.climate.copernicus.eu/datasets/seasonal-postprocessed-pressure-levels
+  - https://cds.climate.copernicus.eu/datasets/seasonal-monthly-ocean
